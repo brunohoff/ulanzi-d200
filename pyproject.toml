@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ulanzi-d200"
+version = "0.1.0"
+description = "Controller for the Ulanzi D200 stream deck"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+dependencies = [
+    "paho-mqtt>=1.6.1",
+    "Pillow>=10.0.0",
+    "hid>=1.0.6",
+]
+
+[project.scripts]
+d200-controller = "ulanzi_d200.__main__:main"
+generate-d200-images = "ulanzi_d200.image_generator:generate_button_images"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

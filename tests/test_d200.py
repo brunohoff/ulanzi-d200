@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test suite for d200_controller.py
+Test suite for the ulanzi_d200 package.
 Tests all logic that can be validated without a physical device:
   - Key mapping constants (KEY_TO_BUTTON, BUTTON_TO_MANIFEST_KEY)
   - Button image generation and folder structure
@@ -11,18 +11,17 @@ Tests all logic that can be validated without a physical device:
 """
 
 import os
-import sys
 import struct
+import sys
 import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
-# Ensure utils/ is on the path
-sys.path.insert(0, os.path.dirname(__file__))
+from PIL import Image
 
-from d200_controller import (
+from ulanzi_d200 import (
     ADBClient,
     BUTTON_TO_MANIFEST_KEY,
     ButtonState,
@@ -43,7 +42,6 @@ from d200_controller import (
     WIDE_LCD_W,
     generate_button_images,
 )
-from PIL import Image
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -80,7 +78,7 @@ class TestKeyMappings(unittest.TestCase):
         self.assertEqual(len(BUTTON_TO_MANIFEST_KEY), TOTAL_LCD_BUTTONS)
 
     def test_button_11_is_in_manifest(self):
-        """Button 11 is now a valid LCD button."""
+        """Button 11 is a valid LCD button."""
         self.assertIn(11, BUTTON_TO_MANIFEST_KEY)
 
     def test_button_14_is_in_manifest(self):
@@ -94,23 +92,24 @@ class TestKeyMappings(unittest.TestCase):
                           f"Button {btn} missing from BUTTON_TO_MANIFEST_KEY")
 
     def test_manifest_key_format(self):
-        """All manifest keys must match ROW_COL format."""
+        """All manifest keys must match COL_ROW format."""
         for btn, key in BUTTON_TO_MANIFEST_KEY.items():
             parts = key.split("_")
             self.assertEqual(len(parts), 2, f"Button {btn}: bad key format {key!r}")
             self.assertTrue(parts[0].isdigit() and parts[1].isdigit(),
-                            f"Button {btn}: non-numeric ROW_COL {key!r}")
+                            f"Button {btn}: non-numeric COL_ROW {key!r}")
 
     def test_key_to_button_values_unique(self):
         """Each button number should appear at most once in KEY_TO_BUTTON."""
         buttons = list(KEY_TO_BUTTON.values())
-        self.assertEqual(len(buttons), len(set(buttons)), "Duplicate button numbers in KEY_TO_BUTTON")
+        self.assertEqual(len(buttons), len(set(buttons)),
+                         "Duplicate button numbers in KEY_TO_BUTTON")
 
     def test_known_key_codes(self):
         """Spot-check specific key codes confirmed from the real device."""
         self.assertEqual(KEY_TO_BUTTON[29],  1)   # row 0, leftmost
         self.assertEqual(KEY_TO_BUTTON[7],  10)   # row 1, rightmost
-        self.assertEqual(KEY_TO_BUTTON[34], 11)   # row 2, no-LCD button
+        self.assertEqual(KEY_TO_BUTTON[34], 11)   # row 2, leftmost
         self.assertEqual(KEY_TO_BUTTON[30], 14)   # row 2, double-wide
 
 
@@ -133,10 +132,10 @@ class TestGenerateButtonImages(unittest.TestCase):
             generate_button_images(tmpdir)
             for btn in sorted(BUTTON_TO_MANIFEST_KEY.keys()):
                 path = os.path.join(tmpdir, str(btn), f"{btn}.png")
-                img = Image.open(path)
-                expected_w = WIDE_LCD_W if btn in WIDE_BUTTONS else LCD_W
-                self.assertEqual(img.size, (expected_w, LCD_H),
-                                 f"Button {btn}: expected {expected_w}\u00d7{LCD_H}, got {img.size}")
+                with Image.open(path) as img:
+                    expected_w = WIDE_LCD_W if btn in WIDE_BUTTONS else LCD_W
+                    self.assertEqual(img.size, (expected_w, LCD_H),
+                                     f"Button {btn}: expected {expected_w}×{LCD_H}, got {img.size}")
 
     def test_folder_structure(self):
         """Each LCD button has its own sub-folder."""
@@ -144,7 +143,8 @@ class TestGenerateButtonImages(unittest.TestCase):
             generate_button_images(tmpdir)
             for btn in sorted(BUTTON_TO_MANIFEST_KEY.keys()):
                 btn_dir = os.path.join(tmpdir, str(btn))
-                self.assertTrue(os.path.isdir(btn_dir), f"Missing directory: {btn_dir}")
+                self.assertTrue(os.path.isdir(btn_dir),
+                                f"Missing directory: {btn_dir}")
 
 
 # ─── Binary Event Parsing Tests ───────────────────────────────────────────────
@@ -164,7 +164,6 @@ class TestBinaryEventParsing(unittest.TestCase):
     def test_key_down_fires_on_press(self):
         fired = []
         self.inp.on_press = fired.append
-        # Key code 29 → button 1 (row 0, leftmost)
         self.inp._parse_event(make_event(EV_KEY, 29, 1))
         self.assertEqual(fired, [1])
 
@@ -203,12 +202,12 @@ class TestBinaryEventParsing(unittest.TestCase):
         """Events shorter than INPUT_EVENT_SIZE must not crash or fire."""
         fired = []
         self.inp.on_press = fired.append
-        self.inp._parse_event(b"\x00" * 8)   # half-size
-        self.inp._parse_event(b"")            # empty
+        self.inp._parse_event(b"\x00" * 8)
+        self.inp._parse_event(b"")
         self.assertEqual(fired, [])
 
     def test_button_11_fires_on_press(self):
-        """Button 11 (key code 34) is a physical button — fires on_press."""
+        """Button 11 (key code 34) fires on_press."""
         fired = []
         self.inp.on_press = fired.append
         self.inp._parse_event(make_event(EV_KEY, 34, 1))
@@ -224,8 +223,7 @@ class TestPressDetection(unittest.TestCase):
     Uses real timers but with small delays to keep the test suite fast.
     """
 
-    # Use key code 29 → button 1 for all tests
-    KEY_CODE = 29
+    KEY_CODE = 29  # button 1
 
     def setUp(self):
         mock_adb = MagicMock(spec=ADBClient)
@@ -245,7 +243,6 @@ class TestPressDetection(unittest.TestCase):
         self.inp._parse_event(make_event(EV_KEY, self.KEY_CODE, value))
 
     def _click(self):
-        """Simulate a quick press+release."""
         self._press(1)
         time.sleep(0.05)
         self._press(0)
@@ -289,12 +286,10 @@ class TestPressDetection(unittest.TestCase):
         inp.on_single_press = events.append
         inp.on_press = inp.on_release = lambda _: None
 
-        # Button 1 (key 29) click
         inp._parse_event(make_event(EV_KEY, 29, 1))
         time.sleep(0.05)
         inp._parse_event(make_event(EV_KEY, 29, 0))
 
-        # Button 2 (key 15) click
         inp._parse_event(make_event(EV_KEY, 15, 1))
         time.sleep(0.05)
         inp._parse_event(make_event(EV_KEY, 15, 0))
@@ -315,64 +310,59 @@ class TestManifestAPI(unittest.TestCase):
         return mock
 
     def test_probe_returns_true_on_empty(self):
-        """probe() returns True even when manifest is missing (creates fresh manifest on apply)."""
+        """probe() returns True even when manifest is missing."""
         adb = self._make_mock_adb("")
         fb = D200Framebuffer(adb)
-        result = fb.probe()
-        self.assertTrue(result)
+        self.assertTrue(fb.probe())
         self.assertEqual(fb._manifest, {})
 
     def test_probe_returns_true_on_valid_json(self):
         """probe() returns True and stores manifest when JSON is valid."""
-        manifest = '{"0_0": {"Action": "x", "ActionParam": {}, "State": 0, "ViewParam": []}}'
+        manifest = '{"0_0": {"State": 0, "ViewParam": []}}'
         adb = self._make_mock_adb(manifest)
         fb = D200Framebuffer(adb)
-        result = fb.probe()
-        self.assertTrue(result)
+        self.assertTrue(fb.probe())
         self.assertIn("0_0", fb._manifest)
 
     def test_probe_returns_true_on_bad_json(self):
         """probe() returns True even on malformed JSON (starts with empty manifest)."""
         adb = self._make_mock_adb("{bad json}")
         fb = D200Framebuffer(adb)
-        result = fb.probe()
-        self.assertTrue(result)
+        self.assertTrue(fb.probe())
         self.assertEqual(fb._manifest, {})
 
     def test_set_button_image_stages_valid_button(self):
         """set_button_image() returns True and stages the path for LCD buttons."""
         adb = self._make_mock_adb()
         fb = D200Framebuffer(adb)
-        with tempfile.NamedTemporaryFile(suffix=".png") as tmp:
-            Image.new("RGB", (196, 196)).save(tmp.name)
-            result = fb.set_button_image(1, tmp.name)
-        self.assertTrue(result)
-        self.assertIn(1, fb._pending)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = os.path.join(tmpdir, "btn.png")
+            Image.new("RGB", (196, 196)).save(tmp_path)
+            self.assertTrue(fb.set_button_image(1, tmp_path))
+            self.assertIn(1, fb._pending)
 
     def test_set_button_image_accepts_button_11(self):
-        """set_button_image() returns True for button 11 (now has LCD)."""
+        """set_button_image() returns True for button 11."""
         adb = self._make_mock_adb()
         fb = D200Framebuffer(adb)
-        with tempfile.NamedTemporaryFile(suffix=".png") as tmp:
-            Image.new("RGB", (196, 196)).save(tmp.name)
-            result = fb.set_button_image(11, tmp.name)
-        self.assertTrue(result)
-        self.assertIn(11, fb._pending)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = os.path.join(tmpdir, "btn.png")
+            Image.new("RGB", (196, 196)).save(tmp_path)
+            self.assertTrue(fb.set_button_image(11, tmp_path))
+            self.assertIn(11, fb._pending)
 
     def test_set_button_image_rejects_missing_file(self):
         """set_button_image() returns False when the image file doesn't exist."""
         adb = self._make_mock_adb()
         fb = D200Framebuffer(adb)
-        result = fb.set_button_image(1, "/nonexistent/path/button.png")
-        self.assertFalse(result)
+        self.assertFalse(fb.set_button_image(1, "/nonexistent/path/button.png"))
         self.assertNotIn(1, fb._pending)
 
     def test_apply_noop_when_no_pending(self):
         """apply() returns True immediately with no staged changes."""
         adb = self._make_mock_adb()
         fb = D200Framebuffer(adb)
-        result = fb.apply()
-        self.assertTrue(result)
+        self.assertTrue(fb.apply())
 
     def test_apply_returns_false_in_dummy_mode(self):
         """apply() returns False and clears pending in dummy mode."""
@@ -380,8 +370,7 @@ class TestManifestAPI(unittest.TestCase):
         fb = D200Framebuffer(adb)
         fb._dummy_mode = True
         fb._pending[1] = "/some/path.png"
-        result = fb.apply()
-        self.assertFalse(result)
+        self.assertFalse(fb.apply())
         self.assertEqual(fb._pending, {})
 
 
@@ -392,8 +381,7 @@ class TestButtonState(unittest.TestCase):
 
     def test_cancel_timers_no_crash_when_none(self):
         """cancel_timers() is safe when timers are None."""
-        state = ButtonState()
-        state.cancel_timers()
+        ButtonState().cancel_timers()
 
     def test_cancel_timers_cancels_both(self):
         long_timer = MagicMock()
@@ -425,8 +413,7 @@ class TestADBClient(unittest.TestCase):
         """Returns False gracefully when adb is not in PATH."""
         adb = ADBClient()
         with patch("subprocess.run", side_effect=FileNotFoundError):
-            result = adb.is_connected()
-        self.assertFalse(result)
+            self.assertFalse(adb.is_connected())
 
     def test_shell_returns_empty_on_error(self):
         """shell() returns empty string when the command fails."""
@@ -436,8 +423,7 @@ class TestADBClient(unittest.TestCase):
         mock_result.stdout = ""
         mock_result.stderr = "error"
         with patch("subprocess.run", return_value=mock_result):
-            result = adb.shell("some_command")
-        self.assertEqual(result, "")
+            self.assertEqual(adb.shell("some_command"), "")
 
 
 # ─── D200Controller Tests ─────────────────────────────────────────────────────
@@ -446,36 +432,28 @@ class TestADBClient(unittest.TestCase):
 class TestD200Controller(unittest.TestCase):
 
     def test_no_crash_on_missing_device(self):
-        """connect() returns False and prints a helpful message when ADB is unavailable."""
+        """connect() returns False when ADB is unavailable."""
         with tempfile.TemporaryDirectory() as tmpdir:
             ctrl = D200Controller(config=D200Config(images_dir=tmpdir))
             ctrl.adb.is_connected = MagicMock(return_value=False)
-            result = ctrl.connect()
-        self.assertFalse(result)
+            self.assertFalse(ctrl.connect())
 
     def test_load_all_button_images_dummy_mode(self):
-        """
-        load_all_button_images() returns 0 when the images directory is empty.
-        """
+        """load_all_button_images() returns 0 when the images directory is empty."""
         with tempfile.TemporaryDirectory() as tmpdir:
             ctrl = D200Controller(config=D200Config(images_dir=tmpdir))
             ctrl.adb.is_connected = MagicMock(return_value=True)
             ctrl.adb.shell = MagicMock(return_value="Ulanzi D200")
             ctrl.fb._dummy_mode = True
-
-            count = ctrl.load_all_button_images()
-        self.assertEqual(count, 0)
+            self.assertEqual(ctrl.load_all_button_images(), 0)
 
     def test_load_all_button_images_with_files(self):
         """load_all_button_images() stages TOTAL_LCD_BUTTONS images when all are present."""
         with tempfile.TemporaryDirectory() as tmpdir:
             generate_button_images(tmpdir)
-
             ctrl = D200Controller(config=D200Config(images_dir=tmpdir))
-            ctrl.fb._dummy_mode = True  # Skip actual ADB writes
-
-            count = ctrl.load_all_button_images()
-        self.assertEqual(count, TOTAL_LCD_BUTTONS)
+            ctrl.fb._dummy_mode = True
+            self.assertEqual(ctrl.load_all_button_images(), TOTAL_LCD_BUTTONS)
 
 
 # ─── Runner ───────────────────────────────────────────────────────────────────

@@ -8,15 +8,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies and the package in editable mode
+COPY requirements.txt pyproject.toml ./
+COPY src/ src/
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -e .
 
-# Copy application files
+# Copy remaining project files
 COPY . .
 
-# Ensure the state directory exists
+# Ensure runtime directories exist
 RUN mkdir -p /app/state_images /app/button_images
 
-# Run the controller
-ENTRYPOINT ["python", "d200_controller.py"]
+# Run the controller via the installed entry point
+ENTRYPOINT ["python", "-m", "ulanzi_d200"]
