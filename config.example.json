@@ -1,0 +1,8 @@
+{
+  "mqtt_host": "localhost",
+  "mqtt_user": "",
+  "mqtt_pass": "",
+  "mqtt_send_topic": "ulanzi/send",
+  "mqtt_receive_topic": "ulanzi/receive",
+  "boot_mode": "default"
+}

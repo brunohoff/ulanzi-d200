@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  ulanzi-controller:
+    build: .
+    container_name: ulanzi-controller
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./state_images:/app/state_images
+      - ./button_images:/app/button_images
+    environment:
+      - PYTHONUNBUFFERED=1
+    network_mode: "host" # Useful for MQTT on localhost
